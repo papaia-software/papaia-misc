@@ -1,0 +1,48 @@
+name: Tests
+on: [push, pull_request]
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: papaia
+          POSTGRES_PASSWORD: ci_only
+          POSTGRES_DB: papaia_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U papaia -d papaia_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r backend/requirements.lock && pip install --no-deps -e 'backend[test]'
+      - name: SQLite tests
+        run: pytest backend/tests -q
+      - name: PostgreSQL migrations and tests
+        env:
+          DATABASE_URL: postgresql+psycopg://papaia:ci_only@localhost:5432/papaia_test
+          TEST_DATABASE_URL: postgresql+psycopg://papaia:ci_only@localhost:5432/papaia_test
+        run: |
+          cd backend
+          alembic upgrade head
+          alembic check
+          alembic downgrade base
+          alembic upgrade head
+          pytest tests -q
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --prefix frontend
+      - run: npm test --prefix frontend
+      - run: npm run build --prefix frontend
+      - run: npm audit --prefix frontend --audit-level=high
